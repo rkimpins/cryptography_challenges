@@ -18,6 +18,7 @@ and are stored as a json object (dict(diagraph : frequency)) in diagraph_frequen
 This file can also be imported as a module, and contains the following useful function
     * generate_letter_order - returns three formatted lists detailing diagraphs order
 """
+
 import json
 
 # Setup global variables that hold diagraph frequency information
