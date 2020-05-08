@@ -59,9 +59,9 @@ def test_caesar_cipher(message: str, shift: int, result: str):
     """
 
     if caesar_cipher(message, shift) == result:
-        print(f"casar_cipher({message}, {shift}) == {result}), Test Passed")
+        print(f"caesar_cipher({message}, {shift}) == {result}), Test Passed")
     else:
-        print(f"casar_cipher({message}, {shift}) != {result}), Test Failed")
+        print(f"caesar_cipher({message}, {shift}) != {result}), Test Failed")
         print(f"Expected: {result}, Output: {caesar_cipher(message, shift)}")
 
 def main():
@@ -80,6 +80,8 @@ def main():
     test_caesar_cipher(message.upper(), 0, message)
     # Symbols
     test_caesar_cipher("@^$(%&*()#&_a()+{}:>,;,}<.?[", 0, "a")
+    # Negative Shift
+    test_caesar_cipher(message, -1, "zabcdefghijklmnopqrstuvwxy")
 
 if __name__ == "__main__":
     main()
