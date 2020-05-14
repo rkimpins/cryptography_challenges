@@ -1,11 +1,31 @@
+"""Two Time Pad Solver
+
+This script attempts to break a Two Time Pad, or more generally, an N Time Pad
+
+This program uses interactive crib dragging, as well as some complex rules to
+filter results to only ones that could be english words. I originally learned
+about crib dragging from
+https://crypto.stackexchange.com/questions/2249/how-does-one-attack-a-two-time-pad-i-e-one-time-pad-with-key-reuse
+
+This was inspired by working through the course "Cryptography I" by Stanford 
+University on Coursera. This course can be found at 
+https://www.coursera.org/learn/crypto?, and was available on May 7th, 2020.
+
+This file can also be imported as a module, and contains the following useful function
+    * xor_strings - xor strings of different length
+    * string_to_hex - convert from string to hex
+    * hex_to_string - convert from hex to string
+    * crib_drag - run crib dragger on two ciphers
+    * crib_drag_all_ciphers - run crib dragger on all ciphers
+    * match_cribbed_to_words - find possible matches for a segement of text
+    * interactive_solver - start solved for N time pad
+"""
+
+
 import binascii
 import itertools
 import re
 import json
-
-
-#https://crypto.stackexchange.com/questions/2249/how-does-one-attack-a-two-time-pad-i-e-one-time-pad-with-key-reuse
-#Explanation of how to solve two time pad with crib dragging
 
 
 # Words is a list of words, seperated by a newline
@@ -16,6 +36,15 @@ file.close()
 #Common english words used for cribbing
 #https://en.wikipedia.org/wiki/Most_common_words_in_English
 GLOBAL_COMMON_ENGLISH_WORDS = ["the", "be", "to", "of", "and", "a", "in", "that", "have", "I", "it", "for", "not", "on", "with", "he", "as", "you", "do", "at", "this", "but", "his", "by", "from", "they", "we", "say", "she", "or", "an", "will", "my", "one", "all", "would", "there", "their", "what", "so", "up", "out", "if", "about", "who", "get", "which", "go", "me", "when", "make", "can", "like", "time", "no", "just", "him", "know", "take", "people", "into", "year", "your", "good", "some", "could", "them", "see", "other", "than", "then", "now", "look", "only", "come", "its", "over", "think", "also", "back", "after", "use", "two", "how", "our", "work", "first", "well", "way", "even", "new", "want", "because", "any", "these", "give", "day", "most", "us", "her"]
+
+# Small Slant from http://www.patorjk.com/software/taag/
+GLOBAL_INTRO = """
+  _____    _ __     ___
+ / ___/___(_) /    / _ \_______ ____ ____ ____ ____
+/ /__/ __/ / _ \  / // / __/ _ `/ _ `/ _ `/ -_) __/
+\___/_/ /_/_.__/ /____/_/  \_,_/\_, /\_, /\__/_/
+                               /___//___/
+"""
 
 
 def xor_strings(a: str, b: str) -> str:
@@ -225,8 +254,23 @@ def contains_punctuation(string: str) -> bool:
             return True
     return False
 
+def regex_is_part_of_word(string: str) -> [str]:
+    """Checks if a regex string could be part of an english word
 
-def regex_is_part_of_word(string):
+    Depending on the regex provided, our string can appear at the end, start, or
+    middle of an english word. Case is ignored
+
+    Parameters
+    ----------
+    string : str
+        the string to check
+
+    Returns
+    -------
+    list(str)
+        list of words that could match the provided string
+    """
+
     p = re.compile(string, re.IGNORECASE)
     matches = []
     for word in GLOBAL_LIST_OF_AMERICAN_ENGLISH_WORDS:
@@ -235,12 +279,37 @@ def regex_is_part_of_word(string):
             matches.append(word)
     return matches
 
-def convert_cribbed_to_regex(crib_res):
+def convert_cribbed_to_regex(string: str) -> list:
+    """Converts a resulting string from cribbing to a format to regex check against dictionary
+
+    The string is divided by spaces. Depending on where each resulting string
+    appears, they may appear at a different point of an english word. For 
+    example: "and that is", "and" can be the end of a word, "that" must be an
+    exact match, and "is" could be the beginning of a word". Another example 
+    " ant" must be the start of a word, because of the leading space. Using
+    this information, regex symbols are added to reflect the positions it can
+    appear at in a word.
+
+    Parameters
+    ----------
+    string : str
+        the string to convert to a format appropriate for regex
+
+    Returns
+    -------
+    list
+        list of regex words to check against a dictionary
+    """
+
     #TODO what happens when we have multiple spaces?
-    crib_split = crib_res.split(" ")
+    # Split into individual words
+    crib_split = string.split(" ")
+
+    # If only 1 word, must be contained within a word
     if len(crib_split) == 1:
         crib_split[0] = ".*" + crib_split[0] + ".*"
     elif len(crib_split) == 2:
+        # Either we have a leading/trailing space, or two words
         if crib_split[0] == "":
             crib_split[1] = "^" + crib_split[1] + ".*"
         elif crib_split[1] == "":
@@ -249,6 +318,7 @@ def convert_cribbed_to_regex(crib_res):
             crib_split[0] = ".*" + crib_split[0] + "$"
             crib_split[1] = "^" + crib_split[1] + ".*"
     elif len(crib_split) >= 3:
+        # Inner words are all exact matches, outer words depend on spaces
         for index in range(1, len(crib_split)-1):
             crib_split[index] = "^" + crib_split[index] + "$"
         if crib_split[0] != "":
@@ -259,149 +329,228 @@ def convert_cribbed_to_regex(crib_res):
     crib_split = list(filter(lambda x: x != "", crib_split))
     return crib_split
 
-def contains_illegal_symbols(string):
+def contains_illegal_symbols(string: str) -> bool:
+    """Checks if the string contains symbols that suggest it isn't the message
+
+    Currently, if the string contains anything other thatn alpha characters and
+    spaces, we reject it. This is primarily because of collisions with our
+    regular expression. We would like to eventually allow common symbols like 
+    . , ! ? ' " etc. Regex would need to be sanitized or escaped.
+
+
+    Parameters
+    ----------
+    string : str
+        the string to check
+
+    Returns
+    -------
+    bool
+        true iff string does not contain the symbols
+    """
+
     for char in string:
-        #if not str.isalpha(char) and not char.isdigit() and char not in [" ",",",".","!","?","'",'"']:
         if not str.isalpha(char) and char not in [" "]:
             return True
     return False
 
-def match_cribbed_to_words(crib_res):
+def match_cribbed_to_words(string: str) -> [[str]]:
+    """Generate all possible matches against english words for a string
+
+    A crib result will be a string. If it is gibberish, liek "d*3J0fS", we
+    reject it. If it appears like some sort of text segment, like "ove ant",
+    we check each segment of a word ("ove", "ant") to see if it is could possibly
+    be a word. If every segment could in fact be part of a an english word, we
+    return the possible matches. It is important to note that this method will
+    automatically examples that contain words not contained in our dictionary
+    (like user invented words), and currently rejects anything flagged by
+    contains_illegal_symbols.
+
+    Parameters
+    ----------
+    string : str
+        the string to check against an english dictionary
+
+    Returns
+    -------
+    list(list)
+        a list of lists. Each list has all possible matches for one of the segements
+    """
+
     total = 0
     multi_word_matches = []
 
-    #TODO make this play nice with normal punctuation .,!?
-    #darn regex
-    if contains_illegal_symbols(crib_res):
-        #print(f"Illegal: {crib_res}")
+    #TODO implement allowing common punctuation to appear
+
+    # Reject results that 
+    if contains_illegal_symbols(string):
         return []
-    #if not str.isalpha(crib_res):
-        #return []
 
-    crib_split = convert_cribbed_to_regex(crib_res)
+    crib_split = convert_cribbed_to_regex(string)
 
-    # Check that each partial is a word
-    for partial in crib_split:
-
-        match = regex_is_part_of_word(partial)
+    # Check that each segment could be part of a word
+    for segment in crib_split:
+        match = regex_is_part_of_word(segment)
         if match:
             multi_word_matches.append(match)
         else:
             return False
     return multi_word_matches
 
-def decrypt_section(crib, index, ciphertext1, ciphertext2, target):
-    key1 = xor_strings(string_to_hex(crib), ciphertext1[index:])
-    key2 = xor_strings(string_to_hex(crib), ciphertext2[index:])
+def decrypt_section(crib: str, index: int, cipher1: str, cipher2: str, target: str) -> (str, str):
+    """Use a confirmed crib of two ciphers to decrypt the target
+
+    Given two ciphers and a crib at an index that we suspect one of them
+    contains, trys to calculate the key and decrypt the target. Since
+    c xor m1 xor m1 = c, c xor m2 xor m2 = c, and our crib is either m1
+    or m2, by xoring against both ciphers, one of our results is the
+    key, assuming the crib is correct. This key can be used to decrypt the
+    target.
+
+    Parameters
+    ----------
+    crib : str
+        the crib, which is the string we are guessing appears in the cipher
+    index: int
+    cipher1 : [str]
+        the first cipher we found the crib on
+    cipher2 : [str]
+        the second cipher we found the crib on
+    target : str
+        the target cipher we want to decrypt
+
+    Returns
+    -------
+    (str, str):
+        a tuple of two strings, where each string is an attempted decryption
+    """
+
+    # Calculate the key from each
+    key1 = xor_strings(string_to_hex(crib), cipher1[index:])
+    key2 = xor_strings(string_to_hex(crib), cipher2[index:])
+    # Use each key to decrypt the target
     result1 = hex_to_string(xor_strings(target[index:], key1))
     result2 = hex_to_string(xor_strings(target[index:], key2))
-    print(result1)
-    print(result2)
+    # Return both attempted decryptions
+    return (result1, result2)
 
-def interactive_solver(ciphers, target):
+def print_solution(solution: [str], max_width = None):
+    """Pretty print the current solution
+
+    Parameters
+    ----------
+    solution: [str]
+        list of characters in the solution. Unguessed positions are "_"
+    max_width: int
+        the maximum number of characters to show on each line
+
+    Returns
+    -------
+    (str, str):
+        a tuple of two strings, where each string is an attempted decryption
+    """
+
+    if max_width == None:
+        print("".join(solution))
+    elif len(solution) <= max_width:
+        print("".join(solution))
+    else:
+        print("".join(solution[0:max_width]))
+        print_solution(solution[max_width:], max_width)
+
+def print_help(topic: str):
+    """Print help for the user depending on the topic
+
+    Parameters
+    ----------
+    topic: str
+        the topic the user needs help with. Determines what help message will be printed
+    """
+
+    # User needs help choosing a crib
+    if topic == "crib":
+        print("""Help:\nA crib is a word that we suspect would appear in either one of our cipher texts,\nor our target. A common strategy is to guess common english words as the crib,\nand check that the output makes sense. If we have part of a word decrypted, it is\na good choice to guess the rest of the word as the crib. Here are some of the\nmost common english words to use as cribs. Don't forget to try surrounding them\nwith spaces to maximizes the number of decrypted characters""")
+        # Print common words with their ranking in a readable way
+        print("Rank | Word")
+        for index, word in enumerate(GLOBAL_COMMON_ENGLISH_WORDS):
+            print("{:<20}".format(f"[({index+1}) {word}]"), end='')
+            if (index + 1) % 5 == 0:
+                print("")
+        print("")
+
+    elif topic == "crib or result":
+        print("""HELP:\nShould we insert our chosen crib or the result of cribbing into our target? It\ncan be tricky to decide if it is the crib or the result of crib dragging which is\nthe solution to our target. If we have multiple ciphers, this becomes a bit\neasier. If the crib result makes sense for multiple cipher combinations at the\nexact same index, then the crib is probably the solution to our target. If the\ncrib result only makes sense for a single cipher, then it is probably the result\nwhich is the solution to our target. Additionally, if we already have a partially\nsolved target, and either our crib or result matches the partial solution, then\nthat is probably the solution. This is an art, not a science, so try a couple of\nthings. If you want to see all the possible dictionary matches for the result of the crib, use the expand matches command""")
+
+def interactive_solver(ciphers: [str], target: str):
+    """An interactive solver users run to solve a two time pad
+
+    Iteratively tries to solve the two time pad. First asks the user for a crib
+    and runs it against the different ciphers. Then asks the user to choose a
+    result which seems like it would be the original message. Users have to
+    choose whether the crib or the resulting text belongs in the target. If
+    multiple cipher pairings at the same index result in what appears to be the
+    original text of the message, then the crib is probably the solution for
+    the target. Otherwise it is the resulting text. Some additional features
+    are a help menu, common cribbing words, and TODO an option to display the
+    possible matching words
+
+    Parameters
+    ----------
+    ciphers : [str]
+        list of ciphers, all encryted with the same key. Lengths can vary
+    target : str
+        the target cipher we are wanting to decrypt
+    """
+
+    print(GLOBAL_INTRO)
+
     solution = ["_" for x in range(len(target)//2)]
     while(True):
-        print(solution)
-        crib = input("Enter a crib (:q to quit):")
+        # Display current solution
+        print_solution(solution, max_width = 30)
+        crib = input("Enter a crib [:q to quit, :h to get help]):")
         if crib == ":q":
             break
+        if crib == ":h":
+            print_help("crib")
+            continue
         matches = crib_drag_all_ciphers(crib, ciphers, target)
         print("(Cipher, Index, Result)")
         for pos, match in enumerate(matches):
-            print(f"[{pos}] {match}")
+            print(f"[{pos}] {match[0:3]}")
 
+        # If no matches, ask for another crib
         if len(matches) == 0:
             continue
 
-        index = input("Choose a matching index, or [None]:")
+        # Select a crib dragging result
+        index = input("Choose an index to match, or enter None:")
         if index != "None":
             index = int(index)
-            ans = input("Is this solution with the target or the cipher [target, cipher]:")
-            if ans == "target":
+            #TODO Make this clearer
+            answer = input("Is it the crib or the result that matches the target [crib, target, expand matches, :h to get help]:")
+            if answer == "crib":
                 for pos, char in enumerate(crib):
                     solution[matches[index][1] + pos] = char
-            elif ans == "cipher":
+            elif answer == "target":
                 for pos, char in enumerate(matches[index][2]):
                     solution[matches[index][1] + pos] = char
+            elif answer == "expand matches":
+                print("Printing suggested matches")
+                print(matches[index][3])
+            elif answer == ":h":
+                print_help("crib or result")
             else:
                 print("Invalid input")
 
-
-
 def main():
-
-    # Shorten match lists that are too long
-    #for ind in range(len(matches)):
-    #    if len(matches[ind]) > 10:
-    #        matches[ind] = matches[ind][0:10]
-    #        matches[ind].append("...")
-
-    #TODO break lines > 80
-    #TODO remove suerflous comments and prints
-
-    #print(match_cribbed_to_words("robab"))
-
-    #ciphertext_1 = "315c4eeaa8b5f8aaf9174145bf43e1784b8fa00dc71d885a804e5ee9fa40b16349c146fb778cdf2d3aff021dfff5b403b510d0d0455468aeb98622b137dae857553ccd8883a7bc37520e06e515d22c954eba5025b8cc57ee59418ce7dc6bc41556bdb36bbca3e8774301fbcaa3b83b220809560987815f65286764703de0f3d524400a19b159610b11ef3e"
-    #ciphertext_2 = "234c02ecbbfbafa3ed18510abd11fa724fcda2018a1a8342cf064bbde548b12b07df44ba7191d9606ef4081ffde5ad46a5069d9f7f543bedb9c861bf29c7e205132eda9382b0bc2c5c4b45f919cf3a9f1cb74151f6d551f4480c82b2cb24cc5b028aa76eb7b4ab24171ab3cdadb8356f"
-    #ciphertext_3 = "32510ba9a7b2bba9b8005d43a304b5714cc0bb0c8a34884dd91304b8ad40b62b07df44ba6e9d8a2368e51d04e0e7b207b70b9b8261112bacb6c866a232dfe257527dc29398f5f3251a0d47e503c66e935de81230b59b7afb5f41afa8d661cb"
-    #ciphertext_4 = "32510ba9aab2a8a4fd06414fb517b5605cc0aa0dc91a8908c2064ba8ad5ea06a029056f47a8ad3306ef5021eafe1ac01a81197847a5c68a1b78769a37bc8f4575432c198ccb4ef63590256e305cd3a9544ee4160ead45aef520489e7da7d835402bca670bda8eb775200b8dabbba246b130f040d8ec6447e2c767f3d30ed81ea2e4c1404e1315a1010e7229be6636aaa"
-    #ciphertext_5 = "3f561ba9adb4b6ebec54424ba317b564418fac0dd35f8c08d31a1fe9e24fe56808c213f17c81d9607cee021dafe1e001b21ade877a5e68bea88d61b93ac5ee0d562e8e9582f5ef375f0a4ae20ed86e935de81230b59b73fb4302cd95d770c65b40aaa065f2a5e33a5a0bb5dcaba43722130f042f8ec85b7c2070"
-    #ciphertext_6 = "32510bfbacfbb9befd54415da243e1695ecabd58c519cd4bd2061bbde24eb76a19d84aba34d8de287be84d07e7e9a30ee714979c7e1123a8bd9822a33ecaf512472e8e8f8db3f9635c1949e640c621854eba0d79eccf52ff111284b4cc61d11902aebc66f2b2e436434eacc0aba938220b084800c2ca4e693522643573b2c4ce35050b0cf774201f0fe52ac9f26d71b6cf61a711cc229f77ace7aa88a2f19983122b11be87a59c355d25f8e4"
-    #ciphertext_7 = "32510bfbacfbb9befd54415da243e1695ecabd58c519cd4bd90f1fa6ea5ba47b01c909ba7696cf606ef40c04afe1ac0aa8148dd066592ded9f8774b529c7ea125d298e8883f5e9305f4b44f915cb2bd05af51373fd9b4af511039fa2d96f83414aaaf261bda2e97b170fb5cce2a53e675c154c0d9681596934777e2275b381ce2e40582afe67650b13e72287ff2270abcf73bb028932836fbdecfecee0a3b894473c1bbeb6b4913a536ce4f9b13f1efff71ea313c8661dd9a4ce"
-    #ciphertext_8 = "315c4eeaa8b5f8bffd11155ea506b56041c6a00c8a08854dd21a4bbde54ce56801d943ba708b8a3574f40c00fff9e00fa1439fd0654327a3bfc860b92f89ee04132ecb9298f5fd2d5e4b45e40ecc3b9d59e9417df7c95bba410e9aa2ca24c5474da2f276baa3ac325918b2daada43d6712150441c2e04f6565517f317da9d3"
-    #ciphertext_9 = "271946f9bbb2aeadec111841a81abc300ecaa01bd8069d5cc91005e9fe4aad6e04d513e96d99de2569bc5e50eeeca709b50a8a987f4264edb6896fb537d0a716132ddc938fb0f836480e06ed0fcd6e9759f40462f9cf57f4564186a2c1778f1543efa270bda5e933421cbe88a4a52222190f471e9bd15f652b653b7071aec59a2705081ffe72651d08f822c9ed6d76e48b63ab15d0208573a7eef027"
-    #ciphertext_10 = "466d06ece998b7a2fb1d464fed2ced7641ddaa3cc31c9941cf110abbf409ed39598005b3399ccfafb61d0315fca0a314be138a9f32503bedac8067f03adbf3575c3b8edc9ba7f537530541ab0f9f3cd04ff50d66f1d559ba520e89a2cb2a83"
-    #target = "32510ba9babebbbefd001547a810e67149caee11d945cd7fc81a05e9f85aac650e9052ba6a8cd8257bf14d13e6f0a803b54fde9e77472dbff89d71b57bddef121336cb85ccb8f3315f4b52e301d16e9f52f904"
+    # Get ciphers from file
     json_data = open('ciphers.txt')
     json_obj = json.load(json_data)
     ciphers = json_obj["ciphers"]
     target = json_obj["target"]
 
-    #ciphertexts = [ciphertext_1, ciphertext_2, ciphertext_3, ciphertext_4, ciphertext_5,
-        #ciphertext_6, ciphertext_7, ciphertext_8, ciphertext_9, ciphertext_10]
-
-    #crib_drag_all_ciphers(" the ", ciphertexts, target)
-    #[0] (0, 13, 'ssage')
-    #[1] (4, 60, 'alize')
-    #[2] (5, 60, 'ecret')
-    #[3] (6, 51, 'never')
-    #[4] (6, 60, 'rnmen')
-
-    #x = crib_drag("message", 11, xor_strings(ciphertext_1, target))
-    #print(x)
-    #matches = match_cribbed_to_words(x)
-    #print(matches)
-
-    #print(contains_illegal_symbols("bhba"))
     interactive_solver(ciphers, target)
-
-
-
-    '''
-    for a result of crib drag in cipher x and y
-    for all x combinations, check that they match at that index
-    for all y combinations, check that they match at that index
-    if one of these is signifigant (like > 3, b/c my matcher is weak)
-    Try decrypting the target and all the other strings using this thing
-    '''
-    '''
-    Input a crib drag
-    It returns possible sections that it could have come from
-    '''
-    '''
-    Make this interactive!!
-    Input a crib
-    Walks through every xored cipher, trying to find a matching index
-    manually pick one
-    Prints out all 10 + target after decrypting
-    loop
-    '''
-
-
-
-
-    #TODO add hints for common words
-
 
 if __name__ == "__main__":
     main()
